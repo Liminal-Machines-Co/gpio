@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+      - uses: oven-sh/setup-bun@v2
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:test
+      - run: npm test # unit tests (bun)
+      - name: integration tests (socat PTY pair + native addon)
+        run: |
+          sudo apt-get update && sudo apt-get install -y socat
+          npm run build:native
+          npm run test:integration
+
+  prebuilds:
+    # Zig cross-compiles every target from a single runner — no per-OS matrix.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+      - run: npm run build:prebuilds
+      - uses: actions/upload-artifact@v6
+        with:
+          name: prebuilds
+          path: prebuilds/
+
+  publish:
+    needs: [test, prebuilds]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - uses: actions/download-artifact@v6
+        with:
+          name: prebuilds
+          path: prebuilds/
+      - name: Verify tag matches package version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG does not match package.json version $PKG"
+            exit 1
+          fi
+      - name: Verify all prebuilds are present
+        run: |
+          for d in darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64; do
+            test -f "prebuilds/$d/serial.node" || { echo "::error::missing prebuilds/$d/serial.node"; exit 1; }
+          done
+      - run: npm ci
+      # prepack (clean + build:ts) runs automatically during publish.
+      - run: npm publish --provenance --access public

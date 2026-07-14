@@ -1,0 +1,4 @@
+bun run format:dryrun
+tsc --noEmit
+bun run lint
+bun run test
