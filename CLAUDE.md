@@ -159,17 +159,26 @@ npm version patch|minor|major
 - `preversion` gate: `lint && typecheck && test` (unit).
 - `npm version` bumps `package.json`, commits, tags `vX.Y.Z`.
 - `postversion`: `git push --follow-tags`.
-- The tag triggers the `publish` CI job: it waits for `test` + `prebuilds`,
-  verifies the tag matches `package.json` and that all five prebuilds exist,
-  then `npm publish --provenance --access public`.
+- `git push --follow-tags` pushes the branch commit AND the tag. The version
+  commit message is prefixed `chore(release):` (via `.npmrc` `message`), and
+  `ci.yml`'s jobs carry an `if:` guard that **skips that branch push** — so the
+  release commit does not run CI on `main`. The tag drives `release.yml`.
+- `release.yml` reuses `ci.yml`'s `test` + `prebuilds` via `workflow_call` (the
+  guard passes because the ref is a tag), then its `publish` job verifies the tag
+  matches `package.json` and that all five `gpio.node` prebuilds exist, then
+  `npm publish --provenance --access public`.
 
 CI is authenticated to npm via trusted publishing.
 
-## CI (`.github/workflows/ci.yml`)
+## CI (`.github/workflows/`)
 
-- `test` — Node + Bun + Zig; typecheck, unit, integration (Linux runner with `gpio-sim`).
-- `prebuilds` — one runner cross-compiles all targets, uploads the artifact.
-- `publish` — tag-gated; downloads prebuilds, verifies, publishes.
+- `ci.yml` — on pushes to `main`, PRs, and `workflow_call`. Jobs: `test`
+  (Node + Bun + Zig; typecheck, unit, integration self-skips without `gpio-sim`)
+  and `prebuilds` (one runner cross-compiles all targets, uploads the artifact).
+  It does **not** trigger on tags, and its jobs skip the `chore(release):` version
+  commit — together that removes the release double-run entirely.
+- `release.yml` — tag-only (`v*`). Reuses `ci.yml` (test + prebuilds), then
+  `publish` downloads the prebuilds artifact, verifies, and publishes.
 
 ## Conventions
 

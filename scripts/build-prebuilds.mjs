@@ -1,5 +1,5 @@
 // Cross-compiles the native addon for every distributed target into
-// ./prebuilds/<platform>-<arch>/serial.node. Zig cross-compiles all targets
+// ./prebuilds/<platform>-<arch>/gpio.node. Zig cross-compiles all targets
 // from a single host, so CI needs only one runner. Pass target triples as args
 // to build a subset, otherwise all are built.
 import { spawnSync } from "node:child_process";
@@ -32,7 +32,7 @@ for (const target of selected) {
 
 // Windows ReleaseFast still emits a .pdb; keep only the .node in prebuilds.
 for (const arch of ["win32-x64", "win32-arm64", "win32-ia32"]) {
-	rmSync(`prebuilds/${arch}/serial.pdb`, { force: true });
+	rmSync(`prebuilds/${arch}/gpio.pdb`, { force: true });
 }
 
 process.exit(failed ? 1 : 0);

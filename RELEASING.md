@@ -28,17 +28,24 @@ That single command:
 
 1. runs `preversion` — `lint`, `typecheck`, and the unit tests (aborts the
    release if anything fails);
-2. writes the new version into `package.json`, commits it, and creates a
+2. writes the new version into `package.json`, commits it (message
+   `chore(release): X.Y.Z`, set by `.npmrc`'s `message`), and creates a
    `vX.Y.Z` git tag;
 3. runs `postversion` — `git push --follow-tags`, which pushes the commit and
    the tag.
 
-Pushing the tag triggers the `publish` job in
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml), which:
+Pushing the tag triggers
+[`.github/workflows/release.yml`](.github/workflows/release.yml), which:
 
-- waits for the `test` and `prebuilds` jobs to pass;
-- verifies the tag matches `package.json` and that all five prebuilds exist;
-- publishes `@liminal-machines-co/serial` to npm with provenance and public access.
+- reuses `ci.yml`'s `test` and `prebuilds` jobs (via `workflow_call`) and waits
+  for them to pass;
+- verifies the tag matches `package.json` and that all five `gpio.node` prebuilds
+  exist;
+- publishes `@liminal-machines-co/gpio` to npm with provenance and public access.
+
+The branch commit that `--follow-tags` also pushes does **not** run CI: its
+`chore(release):` message trips a skip guard on `ci.yml`'s jobs. So a release
+runs exactly one workflow (`release.yml`), not two.
 
 No binaries are built on your machine for a release — the prebuilds job
 cross-compiles all targets on one CI runner and bundles them into the package.
@@ -62,4 +69,4 @@ npm pack --dry-run        # inspect exactly what would be published
 ```
 
 The tarball should contain `dist/`, `index.js`, `index.d.ts`, and
-`prebuilds/<platform>-<arch>/serial.node` for every target — and no test files.
+`prebuilds/<platform>-<arch>/gpio.node` for every target — and no test files.
