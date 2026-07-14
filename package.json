@@ -1,67 +1,67 @@
 {
-  "name": "@liminal-machines-co/gpio",
-  "version": "0.6.1",
-  "description": "Small, fast gpio lib for Node on a Raspberry Pi.",
-  "type": "commonjs",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "bin": {
-    "liminal-serial": "dist/cli.js"
-  },
-  "private": false,
-  "files": [
-    "dist",
-    "prebuilds",
-    "index.js",
-    "index.d.ts"
-  ],
-  "engines": {
-    "node": ">=18"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Liminal-Machines-Co/gpio.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Liminal-Machines-Co/gpio/issues"
-  },
-  "homepage": "https://github.com/Liminal-Machines-Co/gpio#readme",
-  "scripts": {
-    "format:dryrun": "bunx --bun @biomejs/biome format",
-    "format": "bunx --bun @biomejs/biome format --write",
-    "lint": "bunx --bun @biomejs/biome check",
-    "lint:fix": "bunx --bun @biomejs/biome check --write",
-    "clean": "node --eval \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "preversion": "npm run lint && npm run typecheck && npm test",
-    "postversion": "git push --follow-tags",
-    "prepack": "npm run clean && npm run build:ts",
-    "build": "npm run build:native && npm run build:ts",
-    "build:native": "zig build --prefix . -Doptimize=ReleaseFast",
-    "build:prebuilds": "node scripts/build-prebuilds.mjs",
-    "build:ts": "tsc",
-    "typecheck": "tsc --noEmit",
-    "typecheck:test": "tsc -p tsconfig.test.json",
-    "test": "bun test src",
-    "test:integration": "bun test test/integration",
-    "test:hardware": "bun test test/hardware",
-    "test:all": "bun test src test/integration",
-    "prepare": "husky"
-  },
-  "dependencies": {
-    "node-gyp-build": "^4.8.4"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "2.5.3",
-    "@types/bun": "^1.1.14",
-    "@types/node": "^22.10.0",
-    "husky": "^9.1.7",
-    "typescript": "^5.7.0"
-  },
-  "keywords": [
-    "gpio",
-    "zig",
-    "native",
-    "prebuild"
-  ],
-  "license": "MIT"
+	"name": "@liminal-machines-co/gpio",
+	"version": "0.6.1",
+	"description": "Small, fast gpio lib for Node on a Raspberry Pi.",
+	"type": "commonjs",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"bin": {
+		"liminal-gpio": "dist/cli.js"
+	},
+	"private": false,
+	"files": [
+		"dist",
+		"prebuilds",
+		"index.js",
+		"index.d.ts"
+	],
+	"engines": {
+		"node": ">=18"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Liminal-Machines-Co/gpio.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Liminal-Machines-Co/gpio/issues"
+	},
+	"homepage": "https://github.com/Liminal-Machines-Co/gpio#readme",
+	"scripts": {
+		"format:dryrun": "bunx --bun @biomejs/biome format",
+		"format": "bunx --bun @biomejs/biome format --write",
+		"lint": "bunx --bun @biomejs/biome check",
+		"lint:fix": "bunx --bun @biomejs/biome check --write",
+		"clean": "node --eval \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+		"preversion": "npm run lint && npm run typecheck && npm test",
+		"postversion": "git push --follow-tags",
+		"prepack": "npm run clean && npm run build:ts",
+		"build": "npm run build:native && npm run build:ts",
+		"build:native": "zig build --prefix . -Doptimize=ReleaseFast",
+		"build:prebuilds": "node scripts/build-prebuilds.mjs",
+		"build:ts": "tsc",
+		"typecheck": "tsc --noEmit",
+		"typecheck:test": "tsc -p tsconfig.test.json",
+		"test": "bun test src",
+		"test:integration": "bun test test/integration",
+		"test:hardware": "bun test test/hardware",
+		"test:all": "bun test src test/integration",
+		"prepare": "husky"
+	},
+	"dependencies": {
+		"node-gyp-build": "^4.8.4"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.3",
+		"@types/bun": "^1.1.14",
+		"@types/node": "^22.10.0",
+		"husky": "^9.1.7",
+		"typescript": "^5.7.0"
+	},
+	"keywords": [
+		"gpio",
+		"zig",
+		"native",
+		"prebuild"
+	],
+	"license": "MIT"
 }

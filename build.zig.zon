@@ -1,0 +1,17 @@
+.{
+    .name = .gpio,
+    .version = "0.1.0",
+    .fingerprint = 0xba76d4d1f98380fd,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .node_api_headers = .{
+            .url = "git+https://github.com/nodejs/node-api-headers.git#8d0ef96a771d67f79b5436604d8c697ea70b618e",
+            .hash = "N-V-__8AAEiSAQDkVmC0ib1Fbbvu_nyIN7F7rPEsZyEY8dnQ",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
