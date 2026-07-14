@@ -46,18 +46,42 @@ pub fn free(allocator: std.mem.Allocator, entries: []Entry) void {
 
 /// Returns the /dev path of the 40-pin header gpiochip, or null if not found.
 /// Caller owns the returned slice.
+///
+/// Some kernels expose more than one chip with a header label (e.g. recent
+/// Raspberry Pi OS shows two `pinctrl-bcm2835` 54-line chips — gpiochip0 and a
+/// higher-indexed alias — that drive the same header). We pick the
+/// **lowest-numbered** match so detection is deterministic across boots/scans
+/// rather than dependent on readdir order.
 pub fn detectHeaderChip(allocator: std.mem.Allocator) !?[]u8 {
     const entries = try scan(allocator);
     defer free(allocator, entries);
 
-    for (entries) |e| {
-        for (header_labels) |label| {
-            if (std.mem.eql(u8, e.label, label)) {
-                return try allocator.dupe(u8, e.path);
-            }
+    var best: ?*const Entry = null;
+    var best_index: u32 = std.math.maxInt(u32);
+    for (entries) |*e| {
+        if (!isHeaderLabel(e.label)) continue;
+        const idx = chipIndex(e.name) orelse continue;
+        if (idx < best_index) {
+            best_index = idx;
+            best = e;
         }
     }
+    if (best) |e| return try allocator.dupe(u8, e.path);
     return null;
+}
+
+fn isHeaderLabel(label: []const u8) bool {
+    for (header_labels) |l| {
+        if (std.mem.eql(u8, label, l)) return true;
+    }
+    return false;
+}
+
+/// Parses the trailing integer of a "gpiochipN" name; null if malformed.
+fn chipIndex(name: []const u8) ?u32 {
+    const prefix = "gpiochip";
+    if (!std.mem.startsWith(u8, name, prefix)) return null;
+    return std.fmt.parseInt(u32, name[prefix.len..], 10) catch null;
 }
 
 fn scanDev(allocator: std.mem.Allocator, list: *std.ArrayList(Entry)) !void {
