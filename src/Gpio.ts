@@ -15,13 +15,29 @@ function normalizeChipPath(chip: string): string {
 	return chip.startsWith("/dev/") ? chip : `/dev/${chip}`;
 }
 
+// One shared exit listener for every live Gpio. A per-instance
+// process.on("exit") listener would grow the listener list without bound and
+// pin each un-released instance (and its native handle) for the process
+// lifetime.
+const liveInstances = new Set<Gpio>();
+let exitHookInstalled = false;
+
+function ensureExitHook(): void {
+	if (exitHookInstalled) return;
+	exitHookInstalled = true;
+	process.on("exit", () => {
+		// Best-effort synchronous cleanup on process exit; the native
+		// finalizer is the real safety net for anything this misses.
+		for (const gpio of liveInstances) gpio._closeNative();
+	});
+}
+
 export class Gpio implements IGpio {
 	private readonly _options: GpioOptions;
 	private readonly _pins: Map<number, Pin>;
 	private _native: INativeGpio | null;
 	private _openPromise: Promise<void> | null;
 	private _closed: boolean;
-	private readonly _exitHandler: () => void;
 
 	constructor(options?: GpioOptions) {
 		validateGpioOptions(options);
@@ -30,12 +46,8 @@ export class Gpio implements IGpio {
 		this._native = null;
 		this._openPromise = null;
 		this._closed = false;
-		this._exitHandler = () => {
-			// Best-effort synchronous cleanup on process exit; the native
-			// finalizer is the real safety net for anything this misses.
-			this._native?.close();
-		};
-		process.on("exit", this._exitHandler);
+		liveInstances.add(this);
+		ensureExitHook();
 	}
 
 	pin(bcm: number): Pin {
@@ -51,12 +63,21 @@ export class Gpio implements IGpio {
 	async release(): Promise<void> {
 		if (this._closed) return;
 		this._closed = true;
+		// An _open() may still be mid-flight; wait for it so the native handle
+		// it produces is the one closed below rather than leaked.
+		await this._openPromise?.catch(() => {});
 		for (const pin of this._pins.values()) {
 			await pin.release();
 		}
+		this._pins.clear();
 		this._native?.close();
 		this._native = null;
-		process.off("exit", this._exitHandler);
+		liveInstances.delete(this);
+	}
+
+	/** @internal shared process-exit hook cleanup. */
+	_closeNative(): void {
+		this._native?.close();
 	}
 
 	static async listChips(): Promise<ChipInfo[]> {
@@ -80,6 +101,12 @@ export class Gpio implements IGpio {
 		gpio.open(chipPath, (offset, value, timestamp) => {
 			this._pins.get(offset)?._emit(value, timestamp);
 		});
+		if (this._closed) {
+			// released while opening — close now instead of leaking the chip
+			// fd and its threadsafe function (which also keeps the loop alive)
+			gpio.close();
+			throw new Error("Gpio has been released");
+		}
 		this._native = gpio;
 	}
 

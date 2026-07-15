@@ -5,6 +5,7 @@
 //! cb_info reading, wrap/unwrap, promise create/resolve/reject) shared
 //! across root.zig, serial_port_posix.zig, and serial_port_windows.zig.
 //! Behavior is intended to be identical to the raw calls they replace.
+const std = @import("std");
 const c = @import("c");
 
 pub fn getUndefined(env: c.napi_env) c.napi_value {
@@ -68,6 +69,7 @@ pub fn method(name: [:0]const u8, cb: c.napi_callback) c.napi_property_descripto
 /// Defines a class named `name` with constructor `ctor` and the given methods.
 pub fn defineClass(env: c.napi_env, name: [:0]const u8, ctor: c.napi_callback, methods: []const Method) c.napi_value {
     var props: [16]c.napi_property_descriptor = undefined;
+    std.debug.assert(methods.len <= props.len);
     for (methods, 0..) |m, i| props[i] = method(m.name, m.cb);
 
     var class: c.napi_value = undefined;
@@ -111,8 +113,8 @@ pub fn cbInfo(env: c.napi_env, info: c.napi_callback_info, comptime argc: usize)
 // wrap / unwrap
 // ---------------------------------------------------------------------------
 
-pub fn wrap(env: c.napi_env, this: c.napi_value, ptr: *anyopaque, finalize: c.napi_finalize) void {
-    _ = c.napi_wrap(env, this, ptr, finalize, null, null);
+pub fn wrap(env: c.napi_env, this: c.napi_value, ptr: *anyopaque, finalize: c.napi_finalize) bool {
+    return c.napi_wrap(env, this, ptr, finalize, null, null) == c.napi_ok;
 }
 
 pub fn unwrap(env: c.napi_env, this: c.napi_value, comptime T: type) ?*T {

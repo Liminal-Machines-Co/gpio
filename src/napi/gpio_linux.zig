@@ -111,7 +111,12 @@ fn construct(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.napi_va
         return napi.getUndefined(env);
     };
     gpio.* = .{ .lines = std.AutoHashMap(u32, LineEntry).init(alloc) };
-    napi.wrap(env, cb.this, gpio, finalize);
+    if (!napi.wrap(env, cb.this, gpio, finalize)) {
+        gpio.lines.deinit();
+        alloc.destroy(gpio);
+        napi.throwError(env, "failed to wrap NativeGpio");
+        return napi.getUndefined(env);
+    }
     return cb.this;
 }
 
@@ -151,7 +156,6 @@ fn jsOpen(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.napi_value
         napi.throwError(env, "failed to open GPIO chip");
         return napi.getUndefined(env);
     }
-    errdefer _ = close(fd);
 
     var wake_pipe: [2]std.c.fd_t = undefined;
     if (pipe(&wake_pipe) != 0) {
@@ -167,7 +171,11 @@ fn jsOpen(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.napi_value
         argv[1], // JS onEvent callback
         null,
         res_name,
-        0, // max_queue_size: unlimited
+        // max_queue_size: bounded so an edge storm cannot grow the queue (and
+        // the JS heap behind it) without limit. The event thread enqueues
+        // nonblocking; when the queue is full the call fails and the event is
+        // dropped (see eventLoop). Use `debounce` for bouncy inputs.
+        1024,
         1, // initial_thread_count: held until close(), even before the event thread spawns
         null,
         null,
@@ -228,6 +236,9 @@ fn jsRequestLine(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.nap
     {
         gpio.mutex.lock();
         defer gpio.mutex.unlock();
+        // The kernel normally EBUSYs a second request for the same offset, but
+        // if an entry does get replaced its fd must not be leaked.
+        if (gpio.lines.fetchRemove(offset)) |old| _ = close(old.value.fd);
         gpio.lines.put(offset, .{ .fd = req.fd, .edge = built.edge }) catch {
             put_failed = true;
         };
@@ -286,7 +297,9 @@ fn jsSetConfig(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.napi_
         gpio.lines.put(offset, .{ .fd = line_fd, .edge = built.edge }) catch {};
     }
 
-    ensureThreadAndWake(env, gpio);
+    // Spawn the poll thread only when this config enables edges; otherwise a
+    // wake is enough for an existing thread to drop the line from its poll set.
+    if (built.edge) ensureThreadAndWake(env, gpio) else wake(gpio);
 
     return napi.getUndefined(env);
 }
@@ -332,14 +345,28 @@ fn lineFd(gpio: *Gpio, offset: u32) ?std.c.fd_t {
 }
 
 fn queueWork(env: c.napi_env, kind: WorkKind, fd: std.c.fd_t, value: bool) c.napi_value {
+    // Every path must settle the deferred: an unsettled deferred pins the
+    // Promise (and every awaiter) on the JS heap forever.
     const p = napi.createPromise(env);
 
-    const w = alloc.create(Work) catch return p.promise; // leaks unresolved on OOM; acceptable edge case
+    const w = alloc.create(Work) catch {
+        napi.reject(env, p.deferred, napi.createError(env, "out of memory"));
+        return p.promise;
+    };
     w.* = .{ .kind = kind, .fd = fd, .value = value, .deferred = p.deferred };
 
     const res_name = napi.createStringUtf8(env, "liminalGpioWork");
-    _ = c.napi_create_async_work(env, null, res_name, workExecute, workComplete, w, &w.work);
-    _ = c.napi_queue_async_work(env, w.work);
+    if (c.napi_create_async_work(env, null, res_name, workExecute, workComplete, w, &w.work) != c.napi_ok) {
+        alloc.destroy(w);
+        napi.reject(env, p.deferred, napi.createError(env, "failed to create async work"));
+        return p.promise;
+    }
+    if (c.napi_queue_async_work(env, w.work) != c.napi_ok) {
+        _ = c.napi_delete_async_work(env, w.work);
+        alloc.destroy(w);
+        napi.reject(env, p.deferred, napi.createError(env, "failed to queue async work"));
+        return p.promise;
+    }
     return p.promise;
 }
 

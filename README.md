@@ -43,6 +43,9 @@ edge callback and an LED blink.
 - `pin.setInput(options?)` / `pin.setOutput(options?)` — configure the line.
   Calling either again on an already-requested pin reconfigures it in place.
 - `pin.read()` / `pin.write(value)` — async; `value` is always a `boolean`.
+  Both return a Promise: in sustained loops (e.g. toggling on a timer), `await`
+  it or attach `.catch` — unawaited calls issued faster than they complete
+  accumulate pending work without bound.
 - `pin.release()` — release that one line.
 - `gpio.release()` — release all lines, stop the event thread, close the chip.
 - `Gpio.listChips()` — static, lists every `/dev/gpiochipN` with its label and
@@ -64,7 +67,10 @@ await gpio.pin(27).setInput({
 ```
 
 Edges for every configured line on a `Gpio` are delivered through a single
-background poll thread — no extra threads per pin.
+background poll thread — no extra threads per pin. Delivery is bounded: if
+events arrive faster than the JS thread drains them (an edge storm on a bouncy
+or floating input), excess events are dropped rather than queued without limit
+— set `debounce` to tame such inputs.
 
 ### Testing without hardware
 
