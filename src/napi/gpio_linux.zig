@@ -28,6 +28,7 @@ extern "c" fn write(fd: std.c.fd_t, buf: [*]const u8, nbyte: usize) isize;
 extern "c" fn close(fd: std.c.fd_t) c_int;
 extern "c" fn pipe(fds: *[2]std.c.fd_t) c_int;
 extern "c" fn poll(fds: [*]std.c.pollfd, nfds: std.c.nfds_t, timeout: c_int) c_int;
+extern "c" fn usleep(usec: c_uint) c_int;
 extern "c" fn ioctl(fd: std.c.fd_t, request: c_ulong, ...) c_int;
 
 const CONSUMER = "liminal-gpio";
@@ -67,6 +68,10 @@ const Gpio = struct {
     // guards `lines`, which is read by the event thread and mutated by JS-thread methods.
     mutex: SpinLock = .{},
     lines: std.AutoHashMap(u32, LineEntry) = undefined,
+    // bumped by the event thread every time poll() returns; lets releaseLine
+    // wait until the poll cycle that may reference a just-closed line fd has
+    // exited (the kernel keeps the line requested while poll() holds the fd).
+    poll_gen: std.atomic.Value(u64) = std.atomic.Value(u64).init(0),
 };
 
 /// Heap payload handed from the event thread to the JS callback via the TSFN.
@@ -427,7 +432,18 @@ fn jsReleaseLine(env: c.napi_env, info: c.napi_callback_info) callconv(.c) c.nap
             had_edge = kv.value.edge;
         }
     }
-    if (had_edge) wake(gpio);
+    if (had_edge and gpio.thread != null) {
+        // The poll thread may still be blocked in poll() on the closed fd,
+        // which keeps the kernel line requested — an immediate re-request
+        // would EBUSY. Wake it and wait (bounded ~50ms) for the current poll
+        // cycle to exit so the line is free once releaseLine returns.
+        const gen = gpio.poll_gen.load(.acquire);
+        wake(gpio);
+        var spins: u32 = 0;
+        while (gpio.poll_gen.load(.acquire) == gen and spins < 500) : (spins += 1) {
+            _ = usleep(100);
+        }
+    }
 
     return napi.getUndefined(env);
 }
@@ -529,6 +545,9 @@ fn eventLoop(gpio: *Gpio) void {
         nfds += 1;
 
         const rc = poll(&fds, @intCast(nfds), -1);
+        // poll() has exited: any fd closed by releaseLine is no longer
+        // referenced, so its kernel line is now actually free.
+        _ = gpio.poll_gen.fetchAdd(1, .release);
         if (rc < 0) continue;
 
         if (fds[wake_idx].revents != 0) {
