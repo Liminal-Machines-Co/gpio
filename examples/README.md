@@ -9,6 +9,8 @@ Runnable examples plus a quick tour of the API.
 | [`button.ts`](button.ts) | Configure an input with pull-up + edge callback and log presses |
 | [`read-write-loop.ts`](read-write-loop.ts) | Poll an input every 100ms and mirror it to an output |
 | [`mock.ts`](mock.ts) | Test control logic against `MockGpio` with zero hardware |
+| [`soak-write.ts`](soak-write.ts) | Leak soak: fire-and-forget writes on a timer while watching heap drift |
+| [`stress.ts`](stress.ts) | Full stress: many pins, edge listeners, reads, mount/release churn |
 
 ## Running them
 
@@ -27,6 +29,11 @@ bun examples/list-chips.ts
 bun examples/blink.ts 17
 bun examples/button.ts 27
 bun examples/read-write-loop.ts 17 27
+bun examples/soak-write.ts 17
+OUT_PINS=17,22 IN_PINS=5,6 bun examples/stress.ts
+# soak/stress also run hardware-free against the mock:
+GPIO_MOCK=1 bun examples/soak-write.ts
+GPIO_MOCK=1 bun examples/stress.ts
 # or, without Bun:
 npx tsx examples/mock.ts
 ```
