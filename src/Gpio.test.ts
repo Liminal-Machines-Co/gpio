@@ -28,4 +28,10 @@ describe("Gpio lifecycle", () => {
 		await gpio.release();
 		expect(pin.setOutput()).rejects.toThrow("Gpio has been released");
 	});
+
+	test("init after release rejects", async () => {
+		const gpio = new Gpio();
+		await gpio.release();
+		expect(gpio.init()).rejects.toThrow("Gpio has been released");
+	});
 });

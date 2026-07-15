@@ -50,6 +50,15 @@ export class Gpio implements IGpio {
 		ensureExitHook();
 	}
 
+	/**
+	 * Optionally open the chip up front to fail fast on a missing device or
+	 * insufficient permissions. Skipping it is fine — the chip is opened
+	 * lazily on the first pin configuration. Idempotent.
+	 */
+	async init(): Promise<void> {
+		return this._ensureOpen();
+	}
+
 	pin(bcm: number): Pin {
 		validateBcm(bcm);
 		let pin = this._pins.get(bcm);

@@ -60,6 +60,12 @@ export interface GpioOptions {
 
 /** The GPIO controller for a Raspberry Pi header. */
 export interface IGpio {
+	/**
+	 * Optionally open the chip up front to fail fast on a missing device or
+	 * insufficient permissions. Skipping it is fine — the chip is opened
+	 * lazily on the first pin configuration. Idempotent.
+	 */
+	init(): Promise<void>;
 	/** Return the stable cached Pin for a BCM number. */
 	pin(bcm: number): IPin;
 	/** Release all lines, stop the event thread, close the chip. Idempotent. */

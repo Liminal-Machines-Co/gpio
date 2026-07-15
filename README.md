@@ -39,6 +39,9 @@ edge callback and an LED blink.
 
 - `new Gpio(options?)` — opens the header chip. Pass `{ chip: "gpiochip0" }`
   to override auto-detection.
+- `gpio.init()` — optional; opens the chip immediately so a missing device or
+  insufficient permissions fail at startup. Without it, the chip is opened
+  lazily on the first pin configuration and any open error surfaces there.
 - `gpio.pin(bcm)` — returns a stable, cached `Pin` for a BCM pin number.
 - `pin.setInput(options?)` / `pin.setOutput(options?)` — configure the line.
   Calling either again on an already-requested pin reconfigures it in place.

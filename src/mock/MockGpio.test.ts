@@ -8,6 +8,11 @@ test("pin() returns the same cached instance", () => {
 	expect(a).toBe(b);
 });
 
+test("init() resolves (IGpio parity no-op)", async () => {
+	const gpio = new MockGpio();
+	await gpio.init();
+});
+
 test("setInput then read reflects the driven level", async () => {
 	const gpio = new MockGpio();
 	const pin = gpio.pin(4);

@@ -36,6 +36,7 @@ async function main() {
 	const churnMs = Number(process.env.CHURN_MS ?? 500);
 
 	const gpio = mock ? new MockGpio() : new Gpio();
+	await gpio.init();
 
 	const counters = {
 		writes: 0,

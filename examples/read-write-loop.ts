@@ -11,6 +11,7 @@ async function main() {
 	const outBcm = Number(process.argv[3] ?? process.env.GPIO_OUT ?? 27);
 
 	const gpio = new Gpio();
+	await gpio.init(); // optional: fail fast if the chip cannot be opened
 	const input = gpio.pin(inBcm);
 	const output = gpio.pin(outBcm);
 

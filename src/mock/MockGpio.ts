@@ -94,6 +94,9 @@ export class MockGpio implements IGpio {
 		this._pins = new Map();
 	}
 
+	/** No-op: there is no device to open. Present for `IGpio` parity. */
+	async init(): Promise<void> {}
+
 	pin(bcm: number): MockPin {
 		validateBcm(bcm);
 		let pin = this._pins.get(bcm);

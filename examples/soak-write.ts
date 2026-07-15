@@ -19,6 +19,7 @@ async function main() {
 	const snapshots = process.env.SNAPSHOTS === "1";
 
 	const gpio = process.env.GPIO_MOCK ? new MockGpio() : new Gpio();
+	await gpio.init();
 	const pin = gpio.pin(bcm);
 	await pin.setOutput({ initialValue: false });
 

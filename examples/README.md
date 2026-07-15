@@ -67,8 +67,13 @@ same instance:
 
 ```js
 const gpio = new Gpio(); // or new Gpio({ chip: "gpiochip0" }) to override
+await gpio.init(); // optional: fail fast if the chip cannot be opened
 const pin = gpio.pin(17);
 ```
+
+`init()` is optional — without it the chip is opened lazily on the first
+`setInput`/`setOutput`, and an open failure (missing device, no permissions)
+surfaces there instead of at startup.
 
 ### Configure as output or input
 
