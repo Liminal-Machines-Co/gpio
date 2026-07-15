@@ -1,3 +1,5 @@
+![cover](assets/cover.jpg)
+
 # @liminal-machines-co/gpio
 
 A small, fast Raspberry Pi GPIO library for Node.js with a **Zig**-backed
