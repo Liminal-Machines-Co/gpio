@@ -42,11 +42,26 @@ async function main() {
 		reads: 0,
 		events: 0,
 		churns: 0,
-		errors: 0,
+		writeErrors: 0,
+		readErrors: 0,
+		churnErrors: 0,
 	};
-	const swallow = () => {
-		counters.errors++;
+	// Distinct error messages, counted — a wedged pin shows up as one message
+	// repeating forever, a benign churn race as a small bounded count.
+	const errorMessages = new Map<string, number>();
+	const swallow = (kind: "writeErrors" | "readErrors" | "churnErrors") => {
+		return (err: unknown) => {
+			counters[kind]++;
+			const msg = `${kind}: ${err instanceof Error ? err.message : String(err)}`;
+			const n = (errorMessages.get(msg) ?? 0) + 1;
+			errorMessages.set(msg, n);
+			if (n === 1)
+				console.log(
+					`first occurrence @t=${Math.round((Date.now() - start) / 1000)}s — ${msg}`,
+				);
+		};
 	};
+	const start = Date.now();
 
 	const setupInput = (pin: IPin) =>
 		pin.setInput({
@@ -77,7 +92,7 @@ async function main() {
 			level = !level;
 			for (const pin of outputs) {
 				counters.writes++;
-				pin.write(level).catch(swallow);
+				pin.write(level).catch(swallow("writeErrors"));
 			}
 		}, writeMs),
 	);
@@ -87,7 +102,7 @@ async function main() {
 		setInterval(() => {
 			for (const pin of inputs) {
 				counters.reads++;
-				pin.read().catch(swallow);
+				pin.read().catch(swallow("readErrors"));
 			}
 		}, 50),
 	);
@@ -95,20 +110,30 @@ async function main() {
 	// 3. mount/release churn: release + re-request one pin of each role, and
 	//    reconfigure one input in place (setConfig path, poll-set rebuild)
 	let churnTick = 0;
+	let churning = false;
 	timers.push(
 		setInterval(() => {
+			// never overlap churn bodies: overlapping release/setup on the same
+			// pin would race in the script itself and muddy the library signal
+			if (churning) return;
+			churning = true;
 			churnTick++;
 			counters.churns++;
-			const out = outputs[churnTick % outputs.length];
-			const inp = inputs[churnTick % inputs.length];
+			const tick = churnTick;
+			const out = outputs[tick % outputs.length];
+			const inp = inputs[tick % inputs.length];
 			(async () => {
 				await out.release();
 				await setupOutput(out);
 				await inp.release();
 				await setupInput(inp);
 				// reconfigure in place: requested line, new config
-				await setupInput(inputs[(churnTick + 1) % inputs.length]);
-			})().catch(swallow);
+				await setupInput(inputs[(tick + 1) % inputs.length]);
+			})()
+				.catch(swallow("churnErrors"))
+				.finally(() => {
+					churning = false;
+				});
 		}, churnMs),
 	);
 
@@ -123,7 +148,6 @@ async function main() {
 		);
 	}
 
-	const start = Date.now();
 	const baseline = process.memoryUsage().heapUsed;
 	timers.push(
 		setInterval(() => {
@@ -133,7 +157,7 @@ async function main() {
 			console.log(
 				`t=${Math.round((Date.now() - start) / 1000)}s ` +
 					`writes=${counters.writes} reads=${counters.reads} events=${counters.events} ` +
-					`churns=${counters.churns} errors=${counters.errors} ` +
+					`churns=${counters.churns} errors=${counters.writeErrors}w/${counters.readErrors}r/${counters.churnErrors}c ` +
 					`heapUsed=${(heap / 1024 / 1024).toFixed(1)}MB (drift ${drift >= 0 ? "+" : ""}${drift.toFixed(1)}MB)`,
 			);
 		}, 5000),
@@ -141,12 +165,17 @@ async function main() {
 
 	const stop = async () => {
 		for (const t of timers) clearInterval(t);
-		await gpio.release();
 		console.log(
 			`done: writes=${counters.writes} reads=${counters.reads} events=${counters.events} ` +
-				`churns=${counters.churns} errors=${counters.errors} ` +
+				`churns=${counters.churns} ` +
+				`errors=${counters.writeErrors}w/${counters.readErrors}r/${counters.churnErrors}c ` +
 				`final heapUsed=${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)}MB`,
 		);
+		for (const pin of [...outputs, ...inputs]) {
+			console.log(`  pin ${pin.bcm}: direction=${pin.direction}`);
+		}
+		for (const [msg, n] of errorMessages) console.log(`  ${n}x ${msg}`);
+		await gpio.release();
 	};
 
 	process.on("SIGINT", async () => {
