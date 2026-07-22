@@ -3,9 +3,22 @@ import type {
 	GpioOptions,
 	PinInputOptions,
 	PinOutputOptions,
+	PwmChannelConfig,
+	PwmPolarity,
 } from "./types.js";
 
 const VALID_EDGES: readonly Edge[] = ["rising", "falling", "both"];
+const VALID_POLARITIES: readonly PwmPolarity[] = ["normal", "inversed"];
+
+// BCM -> sysfs PWM channel for the standard `dtoverlay=pwm-2chan` mux on Pi
+// 3/4. BCM 12 & 18 both drive channel 0; 13 & 19 both drive channel 1 — so the
+// two pins of a channel are mutually exclusive at the hardware level.
+const PWM_CHANNEL_BY_BCM: Readonly<Record<number, number>> = {
+	12: 0,
+	18: 0,
+	13: 1,
+	19: 1,
+};
 
 // The 40-pin header only exposes BCM 0-27, but RP1 (Pi 5) and other chips can
 // expose lines beyond that range, so we allow the full BCM/RP1 address space
@@ -50,6 +63,61 @@ export function validatePinOutputOptions(options?: PinOutputOptions): void {
 	if (!options) return;
 	if (options.openDrain && options.openSource)
 		throw new TypeError("Pin cannot enable both openDrain and openSource");
+}
+
+/**
+ * Resolve a BCM pin to its hardware-PWM channel, or throw if it isn't a
+ * PWM-capable pin. Also validates the BCM range.
+ */
+export function pwmChannelForBcm(bcm: number): number {
+	validateBcm(bcm);
+	const channel = PWM_CHANNEL_BY_BCM[bcm];
+	if (channel === undefined)
+		throw new TypeError(
+			`BCM ${bcm} is not a hardware-PWM pin (expected one of 12, 13, 18, 19)`,
+		);
+	return channel;
+}
+
+export function validatePwmChannelConfig(config?: PwmChannelConfig): void {
+	if (!config) return;
+	if (config.frequency !== undefined && config.period !== undefined)
+		throw new TypeError("PWM config cannot set both frequency and period");
+	if (config.frequency !== undefined) {
+		if (typeof config.frequency !== "number" || config.frequency <= 0)
+			throw new TypeError("PWM frequency must be a positive number");
+	}
+	if (config.period !== undefined) {
+		if (typeof config.period !== "number" || config.period <= 0)
+			throw new TypeError("PWM period must be a positive number");
+	}
+	if (config.dutyCycle !== undefined) {
+		if (
+			typeof config.dutyCycle !== "number" ||
+			config.dutyCycle < 0 ||
+			config.dutyCycle > 1
+		)
+			throw new TypeError("PWM dutyCycle must be a ratio between 0 and 1");
+	}
+	if (
+		config.polarity !== undefined &&
+		!VALID_POLARITIES.includes(config.polarity)
+	)
+		throw new TypeError(
+			`PWM polarity must be one of: ${VALID_POLARITIES.join(", ")}`,
+		);
+}
+
+/** Validate a standalone duty-cycle ratio (used by `write`/`setDutyCycle`). */
+export function validateDutyCycle(ratio: number): void {
+	if (typeof ratio !== "number" || ratio < 0 || ratio > 1)
+		throw new TypeError("PWM dutyCycle must be a ratio between 0 and 1");
+}
+
+/** Validate a standalone frequency in Hz (used by `setFrequency`). */
+export function validateFrequency(hz: number): void {
+	if (typeof hz !== "number" || hz <= 0)
+		throw new TypeError("PWM frequency must be a positive number");
 }
 
 // Convenience wrapper matching the `validatePinOptions(bcm, opts)` shape from

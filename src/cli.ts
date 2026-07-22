@@ -7,6 +7,7 @@ Usage:
   liminal-gpio info                 List available GPIO chips
   liminal-gpio read <bcm>           Read the current value of a pin
   liminal-gpio write <bcm> <0|1>    Write a value to a pin
+  liminal-gpio pwm <bcm> <duty>     Drive a hardware-PWM pin (duty 0..1)
   liminal-gpio --help               Show this help
   liminal-gpio --version            Show the version
 
@@ -69,6 +70,20 @@ async function main(argv: string[]): Promise<number> {
 			}
 			process.stdout.write(
 				`liminal-gpio write: would configure BCM ${bcm} as an output and write ${value}. ` +
+					"(not implemented in v1)\n",
+			);
+			return 1;
+		}
+		case "pwm": {
+			const [bcm, duty] = rest;
+			if (bcm === undefined || duty === undefined) {
+				process.stderr.write(
+					"liminal-gpio: pwm requires <bcm> and <duty 0..1> arguments\n",
+				);
+				return 1;
+			}
+			process.stdout.write(
+				`liminal-gpio pwm: would drive BCM ${bcm} at duty ${duty} via hardware PWM. ` +
 					"(not implemented in v1)\n",
 			);
 			return 1;

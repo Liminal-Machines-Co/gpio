@@ -34,4 +34,18 @@ describe("Gpio lifecycle", () => {
 		await gpio.release();
 		expect(gpio.init()).rejects.toThrow("Gpio has been released");
 	});
+
+	// Hermetic: pwm() on a non-PWM pin is rejected by the BCM→channel map
+	// before any sysfs is touched, so this runs anywhere.
+	test("pwm on a non-PWM pin rejects without touching sysfs", async () => {
+		const gpio = new Gpio();
+		await expect(gpio.pin(4).pwm()).rejects.toThrow(/not a hardware-PWM pin/);
+		await gpio.release();
+	});
+
+	test("pwm after release rejects", async () => {
+		const gpio = new Gpio();
+		await gpio.release();
+		await expect(gpio.pin(12).pwm()).rejects.toThrow("Gpio has been released");
+	});
 });

@@ -1,6 +1,12 @@
 import { getNative } from "./native.js";
-import { validateBcm, validateGpioOptions } from "./options.js";
+import {
+	pwmChannelForBcm,
+	validateBcm,
+	validateGpioOptions,
+} from "./options.js";
 import { Pin } from "./Pin.js";
+import { PwmChannel } from "./PwmChannel.js";
+import { probePwm, resolvePwmChip } from "./pwm/sysfs.js";
 import type {
 	ChipInfo,
 	GpioOptions,
@@ -10,6 +16,37 @@ import type {
 } from "./types.js";
 
 const DEFAULT_CHIP = "/dev/gpiochip0";
+
+// One-time-per-process guard for the PWM capability warning emitted by init().
+let pwmCapabilityWarned = false;
+
+async function warnPwmCapability(pwmChip?: string): Promise<void> {
+	if (pwmCapabilityWarned || process.platform !== "linux") return;
+	let probe: Awaited<ReturnType<typeof probePwm>>;
+	try {
+		probe = await probePwm({ chip: pwmChip });
+	} catch {
+		return; // never let the probe interfere with init()
+	}
+	if (probe.available) return;
+	pwmCapabilityWarned = true;
+	if (probe.reason === "no-permission") {
+		console.warn(
+			"@liminal-machines-co/gpio: hardware PWM is present but not writable by " +
+				"this user, so pin.pwm() will fail unless you run as root.\n" +
+				"To grant access without root, run:\n\n" +
+				"    sudo usermod -aG gpio $(whoami)\n\n" +
+				"then log out and back in (or reboot) for it to take effect.",
+		);
+	} else {
+		console.warn(
+			"@liminal-machines-co/gpio: hardware PWM is not enabled, so pin.pwm() is " +
+				"unavailable.\nTo enable it, add:\n\n" +
+				"    dtoverlay=pwm-2chan\n\n" +
+				"to /boot/firmware/config.txt (older Pi OS: /boot/config.txt) and reboot.",
+		);
+	}
+}
 
 function normalizeChipPath(chip: string): string {
 	return chip.startsWith("/dev/") ? chip : `/dev/${chip}`;
@@ -28,23 +65,30 @@ function ensureExitHook(): void {
 	process.on("exit", () => {
 		// Best-effort synchronous cleanup on process exit; the native
 		// finalizer is the real safety net for anything this misses.
-		for (const gpio of liveInstances) gpio._closeNative();
+		for (const gpio of liveInstances) {
+			gpio._closeNative();
+			gpio._unexportPwmSync();
+		}
 	});
 }
 
 export class Gpio implements IGpio {
 	private readonly _options: GpioOptions;
 	private readonly _pins: Map<number, Pin>;
+	private readonly _pwmChannels: Map<number, PwmChannel>;
 	private _native: INativeGpio | null;
 	private _openPromise: Promise<void> | null;
+	private _pwmOpenPromise: Promise<string> | null;
 	private _closed: boolean;
 
 	constructor(options?: GpioOptions) {
 		validateGpioOptions(options);
 		this._options = options ?? {};
 		this._pins = new Map();
+		this._pwmChannels = new Map();
 		this._native = null;
 		this._openPromise = null;
+		this._pwmOpenPromise = null;
 		this._closed = false;
 		liveInstances.add(this);
 		ensureExitHook();
@@ -56,7 +100,10 @@ export class Gpio implements IGpio {
 	 * lazily on the first pin configuration. Idempotent.
 	 */
 	async init(): Promise<void> {
-		return this._ensureOpen();
+		await this._ensureOpen();
+		// Non-fatal: we don't know whether the caller will use PWM, so surface a
+		// one-time actionable warning rather than throwing.
+		await warnPwmCapability(this._options.pwmChip);
 	}
 
 	pin(bcm: number): Pin {
@@ -75,6 +122,12 @@ export class Gpio implements IGpio {
 		// An _open() may still be mid-flight; wait for it so the native handle
 		// it produces is the one closed below rather than leaked.
 		await this._openPromise?.catch(() => {});
+		await this._pwmOpenPromise?.catch(() => {});
+		// Copy first: each release() calls back into _pwmChannels.delete.
+		for (const channel of [...this._pwmChannels.values()]) {
+			await channel.release();
+		}
+		this._pwmChannels.clear();
 		for (const pin of this._pins.values()) {
 			await pin.release();
 		}
@@ -87,6 +140,11 @@ export class Gpio implements IGpio {
 	/** @internal shared process-exit hook cleanup. */
 	_closeNative(): void {
 		this._native?.close();
+	}
+
+	/** @internal best-effort synchronous PWM unexport on process exit. */
+	_unexportPwmSync(): void {
+		for (const channel of this._pwmChannels.values()) channel._unexportSync();
 	}
 
 	static async listChips(): Promise<ChipInfo[]> {
@@ -160,5 +218,38 @@ export class Gpio implements IGpio {
 	/** @internal used by Pin. */
 	_releaseLine(offset: number): void {
 		this._native?.releaseLine(offset);
+	}
+
+	/** @internal idempotent, memoized PWM chip resolution. */
+	_ensurePwmOpen(): Promise<string> {
+		if (this._closed) throw new Error("Gpio has been released");
+		if (!this._pwmOpenPromise) {
+			this._pwmOpenPromise = resolvePwmChip({ chip: this._options.pwmChip });
+		}
+		return this._pwmOpenPromise;
+	}
+
+	/**
+	 * @internal Claim (or reuse) the PWM channel for a BCM pin. Throws if the
+	 * channel is already held by its sibling pin (12/18 share ch0, 13/19 ch1).
+	 */
+	async _pwmClaim(bcm: number): Promise<PwmChannel> {
+		const channel = pwmChannelForBcm(bcm);
+		const existing = this._pwmChannels.get(channel);
+		if (existing) {
+			if (existing.bcm !== bcm)
+				throw new Error(
+					`PWM channel ${channel} is already in use by BCM ${existing.bcm} ` +
+						`(BCM ${bcm} shares it); release BCM ${existing.bcm} first`,
+				);
+			return existing;
+		}
+		const chipPath = await this._ensurePwmOpen();
+		const ch = new PwmChannel(chipPath, bcm, channel, () => {
+			this._pwmChannels.delete(channel);
+			this._pins.get(bcm)?._onPwmReleased();
+		});
+		this._pwmChannels.set(channel, ch);
+		return ch;
 	}
 }

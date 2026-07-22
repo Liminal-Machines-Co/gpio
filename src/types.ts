@@ -44,6 +44,12 @@ export interface IPin {
 	readonly direction: PinDirection | null;
 	setInput(options?: PinInputOptions): Promise<void>;
 	setOutput(options?: PinOutputOptions): Promise<void>;
+	/**
+	 * Switch the pin into hardware-PWM mode and return its channel. Only the
+	 * hardware-PWM pins (BCM 12/13/18/19) are accepted; any other pin throws.
+	 * Auto-switches away from a previous input/output mode.
+	 */
+	pwm(config?: PwmChannelConfig): Promise<IPwmChannel>;
 	read(): Promise<boolean>;
 	write(value: boolean): Promise<void>;
 	release(): Promise<void>;
@@ -56,6 +62,12 @@ export interface GpioOptions {
 	 * detected automatically.
 	 */
 	chip?: string;
+	/**
+	 * Override PWM chip discovery. Accepts a chip name ("pwmchip0") or an
+	 * absolute path ("/sys/class/pwm/pwmchip0"). When omitted, the sole PWM chip
+	 * under /sys/class/pwm is used. Needed on boards exposing multiple PWM chips.
+	 */
+	pwmChip?: string;
 }
 
 /** The GPIO controller for a Raspberry Pi header. */
@@ -70,6 +82,57 @@ export interface IGpio {
 	pin(bcm: number): IPin;
 	/** Release all lines, stop the event thread, close the chip. Idempotent. */
 	release(): Promise<void>;
+}
+
+// ---------------------------------------------------------------------------
+// Hardware PWM (sysfs /sys/class/pwm — pure TypeScript, NOT a native SYNC POINT)
+// ---------------------------------------------------------------------------
+
+/** PWM output polarity. "inversed" flips the duty cycle relative to the period. */
+export type PwmPolarity = "normal" | "inversed";
+
+/** Configuration for a hardware-PWM channel. */
+export interface PwmChannelConfig {
+	/** Output frequency in Hz. Mutually exclusive with `period`. */
+	frequency?: number;
+	/** Period in nanoseconds. Mutually exclusive with `frequency`. */
+	period?: number;
+	/** Duty cycle as a 0..1 ratio (0.25 = 25%). Defaults to 0. */
+	dutyCycle?: number;
+	/** Output polarity. Defaults to "normal". */
+	polarity?: PwmPolarity;
+	/** Whether to enable output immediately. Defaults to true. */
+	enabled?: boolean;
+}
+
+/** A single hardware-PWM channel, reached via `pin.pwm()`. */
+export interface IPwmChannel {
+	/** BCM number of the underlying pin. */
+	readonly bcm: number;
+	/** sysfs channel index this pin maps to. */
+	readonly channel: number;
+	/** Set the duty cycle as a 0..1 ratio. */
+	write(ratio: number): Promise<void>;
+	/** Alias of `write`: set the duty cycle as a 0..1 ratio. */
+	setDutyCycle(ratio: number): Promise<void>;
+	/** Change the frequency (Hz); the duty-cycle ratio is preserved. */
+	setFrequency(hz: number): Promise<void>;
+	/** Change the output polarity (only legal while disabled). */
+	setPolarity(polarity: PwmPolarity): Promise<void>;
+	/** Stop output but keep the channel exported for a fast re-enable. */
+	disable(): Promise<void>;
+	/** Stop output, unexport the channel, and return the pin to unconfigured. */
+	release(): Promise<void>;
+}
+
+/** A PWM chip discovered under /sys/class/pwm. */
+export interface PwmChipInfo {
+	/** Absolute sysfs path, e.g. "/sys/class/pwm/pwmchip0". */
+	path: string;
+	/** Chip name, e.g. "pwmchip0". */
+	name: string;
+	/** Number of channels the chip exposes (`npwm`). */
+	npwm: number;
 }
 
 /** A GPIO character device discovered under /dev. */

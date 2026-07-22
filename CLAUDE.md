@@ -39,9 +39,12 @@ src/
                          async-work Promises for read/write
     gpio_stub.zig        stub: loads + throws "GPIO is only supported on Linux"
     enumerate.zig        listChips() + detectHeaderChip() — scans /dev/gpiochip*
-  Gpio.ts                public controller: opens the chip, caches Pin instances
-  Pin.ts                 per-line wrapper: setInput/setOutput/read/write/release
-  mock/MockGpio.ts        standalone IGpio/IPin for hardware-free tests
+  Gpio.ts                public controller: opens the chip, caches Pin instances,
+                         owns PWM chip discovery + channel claim map
+  Pin.ts                 per-line wrapper: setInput/setOutput/pwm/read/write/release
+  PwmChannel.ts          per-channel PWM wrapper: write/setFrequency/disable/release
+  pwm/sysfs.ts           pure-fs /sys/class/pwm backend (export/period/duty/probe)
+  mock/MockGpio.ts        standalone IGpio/IPin + MockPwmChannel for hardware-free tests
   native.ts              memoized loader for the native binding (getNative)
   options.ts             validateGpioOptions / validatePinInputOptions / validatePinOutputOptions
   types.ts               interfaces (IGpio, IPin, NativeLineConfig, INativeGpio, …)
@@ -98,10 +101,20 @@ examples/               runnable .ts usage examples
    Loading is deferred so importing the barrel (for MockGpio) never touches
    the native binary.
 
-9. **PWM/I2C/SPI are throw-stubs, not implemented.** They're separate kernel subsystems
-   (`/sys/class/pwm`, `/dev/i2c-N`, `/dev/spidev`) planned as their own top-level classes
-   in a future release, not members of `Gpio`. v1 scope is digital read/write + pull/bias
-   + edge callbacks only.
+9. **Hardware PWM is a mode of a `Pin`, backed by sysfs in pure TS.** `gpio.pin(n).pwm()`
+   switches the pin to PWM and returns a `PwmChannel` (`src/PwmChannel.ts`) that drives
+   `/sys/class/pwm/pwmchipN/` via `src/pwm/sysfs.ts` — plain `fs` writes, **no Zig, no native
+   contract, no `build.zig` change**. The BCM→channel map (`options.ts`: 12/18→ch0, 13/19→ch1,
+   standard `dtoverlay=pwm-2chan`) resolves the sysfs channel; the pwmchip is discovered
+   dynamically. Two collision guards, both by construction: a `Pin` holds one exclusive
+   **mode** (`in`/`out`/`pwm`/null) so GPIO and PWM can't fight over one pin, and `Gpio` owns a
+   `Map<channel, PwmChannel>` so channel-siblings (12↔18, 13↔19) throw. `Gpio.init()` runs a
+   **non-throwing** capability probe and `console.warn`s (once/process, Linux-only) with a
+   copy-pasteable fix (`sudo usermod -aG gpio $(whoami)` for permissions, or the overlay line).
+   Duty cycle is a **0..1 ratio**. Pi 5/RP1 muxing is unverified — use the `{ pwmChip }` option.
+
+   **I2C/SPI remain throw-stubs, not implemented** (`/dev/i2c-N`, `/dev/spidev`) — planned as
+   their own top-level classes. v1 GPIO scope is digital read/write + pull/bias + edges + PWM.
 
 ## Native contract (must stay in sync across tiers)
 

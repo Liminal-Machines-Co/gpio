@@ -2,12 +2,15 @@ import {
 	validatePinInputOptions,
 	validatePinOutputOptions,
 } from "./options.js";
+import type { PwmChannel } from "./PwmChannel.js";
 import type {
 	IPin,
+	IPwmChannel,
 	NativeLineConfig,
 	PinDirection,
 	PinInputOptions,
 	PinOutputOptions,
+	PwmChannelConfig,
 } from "./types.js";
 
 // Minimal surface Pin needs from its parent Gpio. Kept as an interface (with
@@ -20,27 +23,40 @@ export interface GpioInternal {
 	_readLine(offset: number): Promise<boolean>;
 	_writeLine(offset: number, value: boolean): Promise<void>;
 	_releaseLine(offset: number): void;
+	_pwmClaim(bcm: number): Promise<PwmChannel>;
 }
+
+// A pin holds a single exclusive mode. This is what makes GPIO↔PWM collisions
+// impossible on one pin: it can be digital in/out OR PWM, never both at once.
+type PinMode = "in" | "out" | "pwm" | null;
 
 export class Pin implements IPin {
 	public readonly bcm: number;
-	public direction: PinDirection | null;
 
 	/** @internal invoked by the parent Gpio's event router on each edge. */
 	onChange: ((value: boolean, timestamp: bigint) => void) | undefined;
 
 	private readonly _gpio: GpioInternal;
+	private _mode: PinMode;
 	private _requested: boolean;
+	private _pwmChannel: PwmChannel | undefined;
 
 	constructor(gpio: GpioInternal, bcm: number) {
 		this._gpio = gpio;
 		this.bcm = bcm;
-		this.direction = null;
+		this._mode = null;
 		this._requested = false;
+		this._pwmChannel = undefined;
+	}
+
+	/** Current digital direction, or null when unconfigured or in PWM mode. */
+	get direction(): PinDirection | null {
+		return this._mode === "in" || this._mode === "out" ? this._mode : null;
 	}
 
 	async setInput(options?: PinInputOptions): Promise<void> {
 		validatePinInputOptions(options);
+		await this._teardownPwm();
 		await this._gpio._ensureOpen();
 
 		const config: NativeLineConfig = { direction: "in" };
@@ -58,11 +74,12 @@ export class Pin implements IPin {
 		}
 
 		this.onChange = options?.onChange;
-		this.direction = "in";
+		this._mode = "in";
 	}
 
 	async setOutput(options?: PinOutputOptions): Promise<void> {
 		validatePinOutputOptions(options);
+		await this._teardownPwm();
 		await this._gpio._ensureOpen();
 
 		const config: NativeLineConfig = { direction: "out" };
@@ -81,7 +98,23 @@ export class Pin implements IPin {
 		}
 
 		this.onChange = undefined;
-		this.direction = "out";
+		this._mode = "out";
+	}
+
+	async pwm(config?: PwmChannelConfig): Promise<IPwmChannel> {
+		// Claim first (validates the pin is PWM-capable and resolves the chip)
+		// before tearing down any existing digital line, so a bad call leaves the
+		// pin as it was.
+		const channel = await this._gpio._pwmClaim(this.bcm);
+		if (this._requested) {
+			this._gpio._releaseLine(this.bcm);
+			this._requested = false;
+		}
+		this.onChange = undefined;
+		this._mode = "pwm";
+		this._pwmChannel = channel;
+		await channel._configure(config);
+		return channel;
 	}
 
 	async read(): Promise<boolean> {
@@ -97,19 +130,30 @@ export class Pin implements IPin {
 	}
 
 	async release(): Promise<void> {
-		if (!this._requested) {
-			this.direction = null;
-			this.onChange = undefined;
-			return;
+		await this._teardownPwm();
+		if (this._requested) {
+			this._gpio._releaseLine(this.bcm);
+			this._requested = false;
 		}
-		this._gpio._releaseLine(this.bcm);
-		this._requested = false;
-		this.direction = null;
+		this._mode = null;
 		this.onChange = undefined;
 	}
 
 	/** @internal invoked by the parent Gpio's event router. */
 	_emit(value: boolean, timestamp: bigint): void {
 		this.onChange?.(value, timestamp);
+	}
+
+	/** @internal invoked by Gpio when this pin's PWM channel is released. */
+	_onPwmReleased(): void {
+		this._pwmChannel = undefined;
+		if (this._mode === "pwm") this._mode = null;
+	}
+
+	private async _teardownPwm(): Promise<void> {
+		if (this._pwmChannel) {
+			// release() calls back into _onPwmReleased, clearing our state.
+			await this._pwmChannel.release();
+		}
 	}
 }

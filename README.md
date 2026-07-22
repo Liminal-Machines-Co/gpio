@@ -51,8 +51,11 @@ edge callback and an LED blink.
   Both return a Promise: in sustained loops (e.g. toggling on a timer), `await`
   it or attach `.catch` — unawaited calls issued faster than they complete
   accumulate pending work without bound.
-- `pin.release()` — release that one line.
-- `gpio.release()` — release all lines, stop the event thread, close the chip.
+- `pin.pwm(config?)` — switch the pin to **hardware PWM** and return a
+  `PwmChannel` (see below). Only BCM 12/13/18/19.
+- `pin.release()` — release that one line (or PWM channel).
+- `gpio.release()` — release all lines, unexport all PWM channels, stop the
+  event thread, close the chip.
 - `Gpio.listChips()` — static, lists every `/dev/gpiochipN` with its label and
   line count.
 
@@ -77,6 +80,40 @@ events arrive faster than the JS thread drains them (an edge storm on a bouncy
 or floating input), excess events are dropped rather than queued without limit
 — set `debounce` to tame such inputs.
 
+### Hardware PWM
+
+`pin.pwm(config?)` switches a pin into hardware-PWM mode and returns a
+`PwmChannel`. It's a mode of the pin — a pin is digital **or** PWM, never both,
+so `setOutput()` and `pwm()` on the same pin can't collide:
+
+```ts
+const led = await gpio.pin(18).pwm({ frequency: 1000, dutyCycle: 0.5 });
+await led.write(0.25); // duty cycle as a 0..1 ratio
+await led.setFrequency(2000); // duty ratio is preserved
+await led.disable(); // stop output, stay exported
+await led.release(); // unexport, return the pin to unconfigured
+```
+
+- **Only BCM 12, 13, 18, 19** are hardware-PWM pins. 12 & 18 share channel 0;
+  13 & 19 share channel 1 — you can't drive both pins of a channel at once.
+- `PwmChannel`: `write(ratio)` / `setDutyCycle(ratio)`, `setFrequency(hz)`,
+  `setPolarity("normal" | "inversed")`, `disable()`, `release()`.
+- `config`: `{ frequency? (Hz) | period? (ns), dutyCycle? (0..1), polarity?,
+  enabled? }` — set `frequency` **or** `period`, not both.
+
+**Setup.** Hardware PWM needs the device-tree overlay enabled: add
+`dtoverlay=pwm-2chan` to `/boot/firmware/config.txt` (older Pi OS:
+`/boot/config.txt`) and reboot. sysfs PWM is also root-only unless your user is
+in the `gpio` group:
+
+```sh
+sudo usermod -aG gpio $(whoami)   # then log out and back in
+```
+
+`gpio.init()` checks this and prints a copy-pasteable hint (it warns, never
+throws — GPIO-only apps are unaffected). Pi 5 (RP1) channel muxing varies; pass
+`new Gpio({ pwmChip: "pwmchip0" })` to pick the chip explicitly.
+
 ### Testing without hardware
 
 `MockGpio` is a drop-in for `Gpio` (same interface), so you can test your GPIO
@@ -95,6 +132,10 @@ const out = gpio.pin(27);
 await out.setOutput();
 await out.write(true);
 out.getOutput(); // true
+
+const led = await gpio.pin(18).pwm({ frequency: 1000 });
+await led.write(0.5);
+led.getDutyCycle(); // 0.5 — MockPwmChannel adds getFrequency/getDutyCycle/isEnabled/getPolarity
 ```
 
 ## Platform support
@@ -112,11 +153,11 @@ supported on Linux"` when opened.
 
 ### Scope
 
-v1 covers digital read/write, pull-up/pull-down/open-drain bias, and edge
-callbacks. Hardware **PWM, I2C, and SPI** are separate kernel subsystems
-(`/sys/class/pwm`, `/dev/i2c-N`, `/dev/spidev`) and are **not implemented**
-in this release — they're planned as their own top-level classes, not members
-of `Gpio`.
+v1 covers digital read/write, pull-up/pull-down/open-drain bias, edge
+callbacks, and hardware **PWM** (`pin.pwm()`, see above). **I2C and SPI** are
+separate kernel subsystems (`/dev/i2c-N`, `/dev/spidev`) and are **not
+implemented** in this release — they're planned as their own top-level classes,
+not members of `Gpio`.
 
 The `liminal-gpio` CLI (`info` / `read` / `write`) is also stubbed in v1: it
 prints the intended behavior of each command but does not touch hardware yet.
